@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="pt-BR" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CortexRAG — Enterprise Document Intelligence</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: { 50: '#eef2ff', 500: '#6366f1', 600: '#4f46e5', 700: '#4338ca' },
+            slate: { 850: '#151e2e', 900: '#0f172a', 950: '#020617' }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    .typing-cursor::after {
+      content: '▋';
+      display: inline-block;
+      vertical-align: baseline;
+      animation: blink 1s step-start infinite;
+      color: #6366f1;
+    }
+    @keyframes blink { 50% { opacity: 0; } }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 flex flex-col h-screen overflow-hidden font-sans">
+
+  <!-- Header -->
+  <header class="bg-slate-900/80 border-b border-slate-800 backdrop-blur px-6 py-3 flex items-center justify-between z-10">
+    <div class="flex items-center space-x-3">
+      <div class="w-9 h-9 rounded-lg bg-indigo-600 flex items-center justify-center font-bold text-white shadow-lg shadow-indigo-500/20">
+        🧠
+      </div>
+      <div>
+        <h1 class="font-bold text-lg leading-tight flex items-center gap-2">
+          CortexRAG <span class="text-xs font-semibold px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">Enterprise</span>
+        </h1>
+        <p class="text-xs text-slate-400">Auditable Hybrid RAG & Semantic Cache</p>
+      </div>
+    </div>
+
+    <!-- Metrics Bar -->
+    <div class="hidden md:flex items-center space-x-6 text-xs bg-slate-800/60 border border-slate-700/60 px-4 py-1.5 rounded-full">
+      <div>Consultas: <span id="mTotalQueries" class="font-mono font-bold text-indigo-400">0</span></div>
+      <div class="w-px h-3 bg-slate-700"></div>
+      <div>Cache Hit Rate: <span id="mCacheHitRate" class="font-mono font-bold text-emerald-400">0%</span></div>
+      <div class="w-px h-3 bg-slate-700"></div>
+      <div>Latência Média: <span id="mAvgLatency" class="font-mono font-bold text-amber-400">0ms</span></div>
+    </div>
+
+    <!-- User / Auth Actions -->
+    <div class="flex items-center space-x-3">
+      <div id="userInfo" class="hidden text-right text-xs">
+        <div id="userEmail" class="font-semibold text-slate-200"></div>
+        <div id="tenantName" class="text-slate-400"></div>
+      </div>
+      <button id="btnDemoLogin" onclick="handleDemoLogin()" class="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium px-4 py-2 rounded-lg transition-all shadow-md shadow-indigo-600/30 flex items-center gap-1.5">
+        <span>⚡</span> Acessar Demo (1-Clique)
+      </button>
+      <button id="btnLogout" onclick="handleLogout()" class="hidden text-slate-400 hover:text-white text-xs px-3 py-1.5 border border-slate-700 rounded-lg">
+        Sair
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <div class="flex flex-1 overflow-hidden">
+    
+    <!-- Sidebar: Documents Panel -->
+    <aside class="w-80 bg-slate-900 border-r border-slate-800 flex flex-col">
+      <div class="p-4 border-b border-slate-800 flex items-center justify-between">
+        <h2 class="font-semibold text-sm text-slate-200 flex items-center gap-2">
+          📄 Base de Documentos
+        </h2>
+        <span id="docCount" class="text-xs bg-slate-800 px-2 py-0.5 rounded text-slate-400">0</span>
+      </div>
+
+      <!-- Upload Zone -->
+      <div class="p-4 border-b border-slate-800">
+        <label class="border-2 border-dashed border-slate-700 hover:border-indigo-500 rounded-lg p-3 flex flex-col items-center justify-center cursor-pointer transition-colors bg-slate-950/40">
+          <svg class="w-6 h-6 text-slate-400 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
+          <span class="text-xs text-slate-300 font-medium">Upload de Documento</span>
+          <span class="text-[10px] text-slate-500">PDF, Markdown ou TXT</span>
+          <input type="file" id="fileInput" class="hidden" onchange="handleUpload(event)" accept=".pdf,.md,.txt">
+        </label>
+        <div id="uploadStatus" class="text-xs mt-2 text-indigo-400 hidden">Indexando...</div>
+      </div>
+
+      <!-- Document List -->
+      <div id="docList" class="flex-1 overflow-y-auto p-3 space-y-2">
+        <div class="text-xs text-slate-500 text-center py-8">Nenhum documento carregado. Clique em 'Acessar Demo' para carregar a base modelo.</div>
+      </div>
+    </aside>
+
+    <!-- Chat & RAG Stream Area -->
+    <main class="flex-1 flex flex-col bg-slate-950">
+      
+      <!-- Messages Feed -->
+      <div id="chatMessages" class="flex-1 overflow-y-auto p-6 space-y-6">
+        <!-- Welcome Prompt -->
+        <div class="max-w-2xl mx-auto text-center py-12">
+          <div class="w-14 h-14 bg-indigo-600/10 border border-indigo-500/20 text-indigo-400 rounded-2xl flex items-center justify-center mx-auto mb-4 text-2xl shadow-inner">
+            ⚡
+          </div>
+          <h2 class="text-xl font-bold text-white mb-2">Motor RAG Corporativo Auditável</h2>
+          <p class="text-sm text-slate-400 max-w-lg mx-auto mb-6">
+            Consulte manuais técnicos, SLAs e normas corporativas com busca híbrida densa + lexical e auditoria de fontes em tempo real.
+          </p>
+          <div class="flex flex-wrap gap-2 justify-center">
+            <button onclick="sendQuickPrompt('Qual o RTO e política de MFA exigidos na nuvem?')" class="text-xs bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 px-3 py-1.5 rounded-full text-slate-300 transition-colors">
+              🔒 "Qual o RTO e política de MFA exigidos na nuvem?"
+            </button>
+            <button onclick="sendQuickPrompt('Como funciona o Exponential Backoff e a DLQ no PulseQueue?')" class="text-xs bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 px-3 py-1.5 rounded-full text-slate-300 transition-colors">
+              ⏱️ "Como funciona o Exponential Backoff e a DLQ?"
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Input Bar -->
+      <div class="p-4 border-t border-slate-800 bg-slate-900/40">
+        <form onsubmit="handleSend(event)" class="max-w-3xl mx-auto relative flex items-center">
+          <input 
+            type="text" 
+            id="queryInput" 
+            placeholder="Faça uma pergunta sobre os documentos indexados..." 
+            class="w-full bg-slate-900 border border-slate-700 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 rounded-xl px-4 py-3 pr-24 text-sm text-slate-100 placeholder-slate-500 focus:outline-none transition-all shadow-inner"
+            autocomplete="off"
+          />
+          <button 
+            type="submit" 
+            id="btnSubmit"
+            class="absolute right-2 bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-xs px-4 py-2 rounded-lg transition-all flex items-center gap-1 shadow-md shadow-indigo-600/30"
+          >
+            <span>Perguntar</span>
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"/></svg>
+          </button>
+        </form>
+        <div class="max-w-3xl mx-auto flex items-center justify-between text-[11px] text-slate-500 mt-2 px-1">
+          <span>Respostas embasadas com Reciprocal Rank Fusion (RRF)</span>
+          <span id="rateLimitBadge">Cota: 60 req/min</span>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    let token = localStorage.getItem('cortex_token');
+    let currentUser = null;
+
+    async function init() {
+      if (token) {
+        try {
+          const res = await fetch('/api/v1/auth/me', { headers: { 'Authorization': `Bearer ${token}` } });
+          if (res.ok) {
+            currentUser = await res.json();
+            updateUIState();
+            loadDocuments();
+            loadMetrics();
+          } else {
+            handleLogout();
+          }
+        } catch (e) {
+          console.error(e);
+        }
+      }
+    }
+
+    async function handleDemoLogin() {
+      try {
+        const res = await fetch('/api/v1/auth/demo-login', { method: 'POST' });
+        const data = await res.json();
+        token = data.access_token;
+        localStorage.setItem('cortex_token', token);
+        localStorage.setItem('cortex_tenant_name', data.tenant_name);
+        currentUser = { email: data.user_email, role: data.role, tenant_id: data.tenant_id };
+        updateUIState();
+        await loadDocuments();
+        await loadMetrics();
+      } catch (err) {
+        alert('Erro ao efetuar login de demonstração: ' + err);
+      }
+    }
+
+    function handleLogout() {
+      token = null;
+      currentUser = null;
+      localStorage.removeItem('cortex_token');
+      localStorage.removeItem('cortex_tenant_name');
+      updateUIState();
+      document.getElementById('docList').innerHTML = '<div class="text-xs text-slate-500 text-center py-8">Faça login para visualizar documentos.</div>';
+    }
+
+    function updateUIState() {
+      const btnDemo = document.getElementById('btnDemoLogin');
+      const btnLogout = document.getElementById('btnLogout');
+      const userInfo = document.getElementById('userInfo');
+      const userEmail = document.getElementById('userEmail');
+      const tenantName = document.getElementById('tenantName');
+
+      if (token && currentUser) {
+        btnDemo.classList.add('hidden');
+        btnLogout.classList.remove('hidden');
+        userInfo.classList.remove('hidden');
+        userEmail.innerText = currentUser.email;
+        tenantName.innerText = localStorage.getItem('cortex_tenant_name') || 'Enterprise';
+      } else {
+        btnDemo.classList.remove('hidden');
+        btnLogout.classList.add('hidden');
+        userInfo.classList.add('hidden');
+      }
+    }
+
+    async function loadDocuments() {
+      if (!token) return;
+      try {
+        const res = await fetch('/api/v1/documents/list', { headers: { 'Authorization': `Bearer ${token}` } });
+        if (res.ok) {
+          const data = await res.json();
+          document.getElementById('docCount').innerText = data.total;
+          const container = document.getElementById('docList');
+          if (data.total === 0) {
+            container.innerHTML = '<div class="text-xs text-slate-500 text-center py-8">Nenhum documento indexado.</div>';
+            return;
+          }
+          container.innerHTML = data.documents.map(d => `
+            <div class="bg-slate-800/60 border border-slate-700/60 rounded-lg p-3 hover:border-slate-600 transition-colors">
+              <div class="flex items-center justify-between mb-1">
+                <span class="font-medium text-xs text-slate-200 truncate" title="${d.title}">${d.title}</span>
+                <span class="text-[10px] px-1.5 py-0.5 rounded ${d.status === 'INDEXED' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-amber-500/10 text-amber-400'}">${d.status}</span>
+              </div>
+              <div class="flex items-center justify-between text-[10px] text-slate-400">
+                <span>${d.chunk_count} chunks</span>
+                <span>SHA: ${d.file_hash.substring(0, 6)}</span>
+              </div>
+            </div>
+          `).join('');
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    async function loadMetrics() {
+      if (!token) return;
+      try {
+        const res = await fetch('/api/v1/chat/metrics', { headers: { 'Authorization': `Bearer ${token}` } });
+        if (res.ok) {
+          const m = await res.json();
+          document.getElementById('mTotalQueries').innerText = m.total_queries;
+          document.getElementById('mCacheHitRate').innerText = m.cache_hit_rate_pct + '%';
+          document.getElementById('mAvgLatency').innerText = m.avg_latency_ms + 'ms';
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    async function handleUpload(e) {
+      const file = e.target.files[0];
+      if (!file || !token) return;
+      const status = document.getElementById('uploadStatus');
+      status.classList.remove('hidden');
+      status.innerText = 'Enviando e indexando chunks...';
+
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('title', file.name);
+
+      try {
+        const res = await fetch('/api/v1/documents/upload', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${token}` },
+          body: formData
+        });
+        const data = await res.json();
+        status.innerText = data.message;
+        setTimeout(() => status.classList.add('hidden'), 3000);
+        await loadDocuments();
+        await loadMetrics();
+      } catch (err) {
+        status.innerText = 'Falha no upload: ' + err;
+      }
+    }
+
+    function sendQuickPrompt(txt) {
+      document.getElementById('queryInput').value = txt;
+      handleSend(new Event('submit'));
+    }
+
+    async function handleSend(e) {
+      e.preventDefault();
+      const input = document.getElementById('queryInput');
+      const query = input.value.trim();
+      if (!query) return;
+
+      if (!token) {
+        await handleDemoLogin();
+      }
+
+      input.value = '';
+      const chat = document.getElementById('chatMessages');
+
+      // Append User Message
+      const userDiv = document.createElement('div');
+      userDiv.className = 'flex justify-end';
+      userDiv.innerHTML = `
+        <div class="bg-indigo-600 text-white text-sm rounded-2xl rounded-tr-sm px-4 py-3 max-w-xl shadow-md">
+          ${query}
+        </div>
+      `;
+      chat.appendChild(userDiv);
+
+      // Append Assistant Message Placeholder
+      const botDiv = document.createElement('div');
+      botDiv.className = 'flex justify-start';
+      botDiv.innerHTML = `
+        <div class="bg-slate-900 border border-slate-800 text-slate-200 text-sm rounded-2xl rounded-tl-sm p-4 max-w-2xl shadow-md w-full">
+          <div class="flex items-center justify-between border-b border-slate-800 pb-2 mb-3 text-xs">
+            <span class="font-semibold text-indigo-400 flex items-center gap-1.5">
+              <span>🧠</span> CortexRAG
+            </span>
+            <span class="status-tag text-slate-500 font-mono text-[11px]">Buscando...</span>
+          </div>
+          <div class="citations-container mb-3 flex flex-wrap gap-1.5 hidden"></div>
+          <div class="response-text leading-relaxed whitespace-pre-wrap typing-cursor"></div>
+        </div>
+      `;
+      chat.appendChild(botDiv);
+      chat.scrollTop = chat.scrollHeight;
+
+      const responseEl = botDiv.querySelector('.response-text');
+      const citationsContainer = botDiv.querySelector('.citations-container');
+      const statusTag = botDiv.querySelector('.status-tag');
+
+      // SSE Fetch Stream
+      try {
+        const response = await fetch('/api/v1/chat/stream', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({ query: query, stream: true })
+        });
+
+        // Track Rate Limit Headers
+        const rem = response.headers.get('X-RateLimit-Remaining');
+        if (rem) {
+          document.getElementById('rateLimitBadge').innerText = `Cota Restante: ${rem} req`;
+        }
+
+        if (!response.ok) {
+          const errData = await response.json();
+          responseEl.classList.remove('typing-cursor');
+          responseEl.innerText = `Erro: ${errData.detail || 'Falha na requisição'}`;
+          return;
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n\n');
+          buffer = lines.pop(); // keep remainder
+
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              const data = JSON.parse(line.substring(6));
+
+              if (data.type === 'cache_hit') {
+                statusTag.innerText = `⚡ Semantic Cache Hit (${data.latency_ms}ms)`;
+                statusTag.className = 'status-tag text-emerald-400 font-mono text-[11px] font-semibold';
+              } else if (data.type === 'citations') {
+                if (data.citations && data.citations.length > 0) {
+                  citationsContainer.classList.remove('hidden');
+                  citationsContainer.innerHTML = data.citations.map((c, idx) => `
+                    <span class="inline-flex items-center text-[10px] bg-slate-800 border border-slate-700 text-slate-300 px-2 py-0.5 rounded cursor-help" title="${c.snippet}">
+                      [Fonte ${idx + 1}: ${c.document_title} - Pág ${c.page}]
+                    </span>
+                  `).join('');
+                }
+              } else if (data.type === 'delta') {
+                responseEl.innerText += data.delta;
+                chat.scrollTop = chat.scrollHeight;
+              } else if (data.type === 'done') {
+                responseEl.classList.remove('typing-cursor');
+                if (!statusTag.innerText.includes('Cache Hit')) {
+                  statusTag.innerText = `RAG Híbrido (${data.latency_ms}ms)`;
+                }
+                loadMetrics();
+              }
+            }
+          }
+        }
+      } catch (err) {
+        responseEl.classList.remove('typing-cursor');
+        responseEl.innerText = `Erro de conexão: ${err.message}`;
+      }
+    }
+
+    init();
+  </script>
+</body>
+</html>
